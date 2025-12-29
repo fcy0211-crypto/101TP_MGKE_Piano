@@ -1,6 +1,6 @@
 import asyncio
 import sqlite3
-from datetime import date
+from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -40,9 +40,6 @@ REASONS = [
     "по неуважительной причине"
 ]
 
-# ⬇️ ВАЖНО: текущая дата рапортички
-CURRENT_DATE = None
-
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
@@ -67,15 +64,10 @@ def init_db():
             date TEXT,
             student_id INTEGER,
             status TEXT,
-            reason TEXT
+            reason TEXT,
+            author TEXT
         )
         """)
-
-        # --- миграция author ---
-        c.execute("PRAGMA table_info(attendance)")
-        columns = [col[1] for col in c.fetchall()]
-        if "author" not in columns:
-            c.execute("ALTER TABLE attendance ADD COLUMN author TEXT")
 
         for s in STUDENTS:
             c.execute(
@@ -155,12 +147,9 @@ async def start(msg: Message):
         reply_markup=main_menu()
     )
 
-# -------- ОТМЕТИТЬ ОТСУТСТВУЮЩИХ --------
+# -------- ОТМЕТКА ОТСУТСТВУЮЩИХ --------
 @dp.message(F.text == "📋 Отметить отсутствующих")
 async def mark_menu(msg: Message):
-    global CURRENT_DATE
-    CURRENT_DATE = str(date.today())
-
     kb = []
     with db() as conn:
         c = conn.cursor()
@@ -173,8 +162,10 @@ async def mark_menu(msg: Message):
                 )
             ])
 
+    today = datetime.now().date().isoformat()
+
     await msg.answer(
-        f"📅 Дата: {CURRENT_DATE}",
+        f"📅 Дата: {today}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
 
@@ -194,12 +185,9 @@ async def choose_reason(call: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("reason_"))
 async def save_attendance(call: CallbackQuery):
-    global CURRENT_DATE
-
-    if CURRENT_DATE is None:
-        CURRENT_DATE = str(date.today())
-
     _, sid, reason = call.data.split("_", 2)
+
+    real_date = datetime.now().date().isoformat()
 
     with db() as conn:
         c = conn.cursor()
@@ -207,7 +195,7 @@ async def save_attendance(call: CallbackQuery):
         INSERT INTO attendance (date, student_id, status, reason, author)
         VALUES (?, ?, ?, ?, ?)
         """, (
-            CURRENT_DATE,
+            real_date,
             sid,
             "отсутствовал",
             reason,
@@ -224,7 +212,7 @@ async def export_menu(msg: Message):
     update_excel_file()
     await msg.answer_document(
         FSInputFile(EXCEL_FILE),
-        caption="📤 Общая синхронизированная рапортичка группы 101 тп"
+        caption="📤 Общая рапортичка группы 101 тп"
     )
 
 # -------- ОЧИСТКА --------
@@ -265,4 +253,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
