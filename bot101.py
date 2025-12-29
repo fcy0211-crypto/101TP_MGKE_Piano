@@ -1,6 +1,5 @@
 import asyncio
 import sqlite3
-from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -14,6 +13,8 @@ from aiogram.types import (
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 from openpyxl.worksheet.table import Table, TableStyleInfo
+
+from time_service import get_current_date  # ⬅️ ВАЖНО
 
 # ================== НАСТРОЙКИ ==================
 BOT_TOKEN = "8397597216:AAFtzivDMoNxcRU06vp8wobfG6NU28BkIgs"
@@ -147,7 +148,7 @@ async def start(msg: Message):
         reply_markup=main_menu()
     )
 
-# -------- ОТМЕТКА ОТСУТСТВУЮЩИХ --------
+# -------- ОТМЕТИТЬ ОТСУТСТВУЮЩИХ --------
 @dp.message(F.text == "📋 Отметить отсутствующих")
 async def mark_menu(msg: Message):
     kb = []
@@ -162,10 +163,8 @@ async def mark_menu(msg: Message):
                 )
             ])
 
-    today = datetime.now().date().isoformat()
-
     await msg.answer(
-        f"📅 Дата: {today}",
+        f"📅 Дата: {get_current_date()}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
 
@@ -187,15 +186,13 @@ async def choose_reason(call: CallbackQuery):
 async def save_attendance(call: CallbackQuery):
     _, sid, reason = call.data.split("_", 2)
 
-    real_date = datetime.now().date().isoformat()
-
     with db() as conn:
         c = conn.cursor()
         c.execute("""
         INSERT INTO attendance (date, student_id, status, reason, author)
         VALUES (?, ?, ?, ?, ?)
         """, (
-            real_date,
+            get_current_date(),
             sid,
             "отсутствовал",
             reason,
@@ -212,7 +209,7 @@ async def export_menu(msg: Message):
     update_excel_file()
     await msg.answer_document(
         FSInputFile(EXCEL_FILE),
-        caption="📤 Общая рапортичка группы 101 тп"
+        caption="📤 Общая синхронизированная рапортичка группы 101 тп"
     )
 
 # -------- ОЧИСТКА --------
