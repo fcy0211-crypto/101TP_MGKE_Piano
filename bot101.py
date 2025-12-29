@@ -40,6 +40,9 @@ REASONS = [
     "по неуважительной причине"
 ]
 
+# ⬇️ ВАЖНО: текущая дата рапортички
+CURRENT_DATE = None
+
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
@@ -68,7 +71,7 @@ def init_db():
         )
         """)
 
-        # ---- МИГРАЦИЯ: author ----
+        # --- миграция author ---
         c.execute("PRAGMA table_info(attendance)")
         columns = [col[1] for col in c.fetchall()]
         if "author" not in columns:
@@ -152,9 +155,12 @@ async def start(msg: Message):
         reply_markup=main_menu()
     )
 
-# -------- Отметить отсутствующих --------
+# -------- ОТМЕТИТЬ ОТСУТСТВУЮЩИХ --------
 @dp.message(F.text == "📋 Отметить отсутствующих")
 async def mark_menu(msg: Message):
+    global CURRENT_DATE
+    CURRENT_DATE = str(date.today())
+
     kb = []
     with db() as conn:
         c = conn.cursor()
@@ -168,7 +174,7 @@ async def mark_menu(msg: Message):
             ])
 
     await msg.answer(
-        f"📅 Дата: {date.today()}",
+        f"📅 Дата: {CURRENT_DATE}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
 
@@ -188,6 +194,11 @@ async def choose_reason(call: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("reason_"))
 async def save_attendance(call: CallbackQuery):
+    global CURRENT_DATE
+
+    if CURRENT_DATE is None:
+        CURRENT_DATE = str(date.today())
+
     _, sid, reason = call.data.split("_", 2)
 
     with db() as conn:
@@ -196,7 +207,7 @@ async def save_attendance(call: CallbackQuery):
         INSERT INTO attendance (date, student_id, status, reason, author)
         VALUES (?, ?, ?, ?, ?)
         """, (
-            str(date.today()),
+            CURRENT_DATE,
             sid,
             "отсутствовал",
             reason,
@@ -207,7 +218,7 @@ async def save_attendance(call: CallbackQuery):
     update_excel_file()
     await call.message.answer("✅ Отмечено")
 
-# -------- Выгрузка --------
+# -------- ВЫГРУЗКА --------
 @dp.message(F.text == "📤 Выгрузить рапортичку")
 async def export_menu(msg: Message):
     update_excel_file()
@@ -216,7 +227,7 @@ async def export_menu(msg: Message):
         caption="📤 Общая синхронизированная рапортичка группы 101 тп"
     )
 
-# -------- Очистка --------
+# -------- ОЧИСТКА --------
 @dp.message(F.text == "🗑 Очистить рапортичку")
 async def clear_menu(msg: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -254,3 +265,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
