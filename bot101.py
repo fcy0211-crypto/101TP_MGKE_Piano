@@ -26,8 +26,8 @@ from report_logic import (
 # ================== НАСТРОЙКИ ==================
 BOT_TOKEN = "8397597216:AAFtzivDMoNxcRU06vp8wobfG6NU28BkIgs"
 
-ADMIN_USERNAME = "Glabak0200"  # ← БЕЗ @
-ADMIN_CHAT_ID = None              # заполняется автоматически
+ADMIN_USERNAME = "Glabak0200"   # ← БЕЗ @
+ADMIN_CHAT_ID = None               # заполняется автоматически
 
 DB_FILE = "attendance.db"
 EXCEL_FILE = "rapport_101tp.xlsx"
@@ -153,6 +153,7 @@ def main_menu():
         keyboard=[
             [KeyboardButton(text="📋 Отметить отсутствующих")],
             [KeyboardButton(text="📤 Выгрузить рапортичку")],
+            [KeyboardButton(text="📨 Отправить рапортичку админу")],
             [KeyboardButton(text="♻ Восстановить за месяц")],
             [KeyboardButton(text="🗑 Очистить рапортичку")]
         ],
@@ -236,6 +237,26 @@ async def export(msg: Message):
         FSInputFile(EXCEL_FILE),
         caption="📤 Общая рапортичка группы 101 тп"
     )
+
+# -------- ОТПРАВКА АДМИНУ --------
+@dp.message(F.text == "📨 Отправить рапортичку админу")
+async def send_to_admin(msg: Message):
+    if not ADMIN_CHAT_ID:
+        await msg.answer(
+            "❌ Администратор ещё не написал /start боту.\n"
+            "Отправка невозможна."
+        )
+        return
+
+    update_excel_file()
+
+    await bot.send_document(
+        ADMIN_CHAT_ID,
+        FSInputFile(EXCEL_FILE),
+        caption="📨 Рапортичка отправлена вручную"
+    )
+
+    await msg.answer("✅ Рапортичка отправлена админу")
 
 # -------- ВОССТАНОВЛЕНИЕ --------
 @dp.message(F.text == "♻ Восстановить за месяц")
