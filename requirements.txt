@@ -1,2 +1,2 @@
-aiogram
-openpyxl
+aiogram>=3.4
+openpyxl>=3.1
