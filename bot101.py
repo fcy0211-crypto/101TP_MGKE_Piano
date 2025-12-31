@@ -69,15 +69,15 @@ def today():
 def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# ================= EXCEL (С ЦВЕТАМИ) =================
+# ================= EXCEL (РАСКРАШЕННЫЙ) =================
 def export_excel():
     wb = Workbook()
     ws = wb.active
     ws.title = "Рапортичка"
 
     header_fill = PatternFill("solid", fgColor="DDDDDD")
-    green_fill = PatternFill("solid", fgColor="C6EFCE")
-    red_fill = PatternFill("solid", fgColor="FFC7CE")
+    green_fill = PatternFill("solid", fgColor="C6EFCE")  # присутствовал
+    red_fill = PatternFill("solid", fgColor="FFC7CE")    # отсутствовал
 
     headers = ["Дата", "ФИО", "Статус", "Причина", "Кто отметил"]
     ws.append(headers)
@@ -107,12 +107,12 @@ def export_excel():
             if student in absent:
                 reason, author = absent[student]
                 ws.append([date, student, "отсутствовал", reason, author])
-                for c in ws[ws.max_row]:
-                    c.fill = red_fill
+                for cell in ws[ws.max_row]:
+                    cell.fill = red_fill
             else:
                 ws.append([date, student, "присутствовал", "", ""])
-                for c in ws[ws.max_row]:
-                    c.fill = green_fill
+                for cell in ws[ws.max_row]:
+                    cell.fill = green_fill
 
     for col in ws.columns:
         ws.column_dimensions[col[0].column_letter].width = 30
