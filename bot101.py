@@ -124,26 +124,31 @@ async def start(msg: Message):
 async def choose_student(msg: Message):
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=s, callback_data=f"st|{s}")]
-            for s in STUDENTS
+            [InlineKeyboardButton(text=s, callback_data=f"s{i}")]
+            for i, s in enumerate(STUDENTS)
         ]
     )
     await msg.answer(f"Дата: {today()}", reply_markup=kb)
 
-@dp.callback_query(lambda c: c.data.startswith("st|"))
+@dp.callback_query(lambda c: c.data.startswith("s"))
 async def choose_reason(call: CallbackQuery):
-    student = call.data.split("|", 1)[1]
+    idx = int(call.data[1:])
+    student = STUDENTS[idx]
+
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=r, callback_data=f"rs|{student}|{r}")]
-            for r in REASONS
+            [InlineKeyboardButton(text=r, callback_data=f"r{idx}|{i}")]
+            for i, r in enumerate(REASONS)
         ]
     )
     await call.message.answer(student, reply_markup=kb)
 
-@dp.callback_query(lambda c: c.data.startswith("rs|"))
+@dp.callback_query(lambda c: c.data.startswith("r"))
 async def save(call: CallbackQuery):
-    _, student, reason = call.data.split("|", 2)
+    left, reason_idx = call.data[1:].split("|")
+    student = STUDENTS[int(left)]
+    reason = REASONS[int(reason_idx)]
+
     with db() as con:
         con.execute("""
         INSERT INTO attendance (date, student, reason, author, deleted_at)
@@ -155,7 +160,8 @@ async def save(call: CallbackQuery):
             call.from_user.username or call.from_user.full_name
         ))
         con.commit()
-    await call.message.answer("✅ Записано")
+
+    await call.message.answer("✅ Отмечено")
 
 # ================= РЕДАКТИРОВАНИЕ =================
 @dp.message(lambda m: m.text == "✏ Редактировать")
@@ -174,35 +180,36 @@ async def edit(msg: Message):
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(
-                text=f"{r[1]} | {r[2]} | {r[3]}",
-                callback_data=f"ed|{r[0]}"
+                text=f"{r[1]} | {r[2]}",
+                callback_data=f"e{r[0]}"
             )] for r in rows
         ]
     )
     await msg.answer("Выбери запись:", reply_markup=kb)
 
-@dp.callback_query(lambda c: c.data.startswith("ed|"))
+@dp.callback_query(lambda c: c.data.startswith("e"))
 async def edit_reason(call: CallbackQuery):
-    rec_id = call.data.split("|")[1]
+    rec_id = int(call.data[1:])
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(
-                text=r,
-                callback_data=f"upd|{rec_id}|{r}"
-            )] for r in REASONS
+            [InlineKeyboardButton(text=r, callback_data=f"u{rec_id}|{i}")]
+            for i, r in enumerate(REASONS)
         ]
     )
     await call.message.answer("Новая причина:", reply_markup=kb)
 
-@dp.callback_query(lambda c: c.data.startswith("upd|"))
+@dp.callback_query(lambda c: c.data.startswith("u"))
 async def update(call: CallbackQuery):
-    _, rec_id, reason = call.data.split("|", 2)
+    rec_id, reason_idx = call.data[1:].split("|")
+    reason = REASONS[int(reason_idx)]
+
     with db() as con:
         con.execute(
             "UPDATE attendance SET reason=? WHERE id=?",
-            (reason, rec_id)
+            (reason, int(rec_id))
         )
         con.commit()
+
     await call.message.answer("✏ Обновлено")
 
 # ================= ВЫГРУЗКА =================
@@ -217,6 +224,7 @@ async def send_admin(msg: Message):
     if not ADMIN_CHAT_ID:
         await msg.answer("Админ не активен")
         return
+
     export_excel()
     await bot.send_document(
         ADMIN_CHAT_ID,
