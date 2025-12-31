@@ -1,6 +1,6 @@
 import asyncio
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -59,7 +59,8 @@ def init_db():
             student TEXT,
             status TEXT,
             reason TEXT,
-            author TEXT
+            author TEXT,
+            deleted_at TEXT
         )
         """)
         conn.commit()
@@ -67,6 +68,9 @@ def init_db():
 # ================= ДАТА =================
 def today():
     return datetime.now().strftime("%Y-%m-%d")
+
+def now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 # ================= EXCEL =================
 def export_excel():
@@ -83,6 +87,7 @@ def export_excel():
         cur.execute("""
         SELECT date, student, status, reason, author
         FROM attendance
+        WHERE deleted_at IS NULL
         ORDER BY date, student
         """)
         for row in cur.fetchall():
@@ -101,6 +106,7 @@ def main_menu():
             [KeyboardButton(text="✏ Редактировать рапортичку")],
             [KeyboardButton(text="📤 Выгрузить рапортичку")],
             [KeyboardButton(text="📨 Отправить админу")],
+            [KeyboardButton(text="♻ Восстановить за месяц")],
             [KeyboardButton(text="🗑 Очистить рапортичку")]
         ],
         resize_keyboard=True
@@ -150,8 +156,8 @@ async def save(call: CallbackQuery):
     with db() as conn:
         conn.execute("""
         INSERT INTO attendance
-        (date, student, status, reason, author)
-        VALUES (?, ?, 'отсутствовал', ?, ?)
+        (date, student, status, reason, author, deleted_at)
+        VALUES (?, ?, 'отсутствовал', ?, ?, NULL)
         """, (
             today(),
             student,
@@ -165,9 +171,11 @@ async def save(call: CallbackQuery):
 @dp.message(F.text == "✏ Редактировать рапортичку")
 async def edit(msg: Message):
     with db() as conn:
-        rows = conn.execute(
-            "SELECT id, date, student FROM attendance"
-        ).fetchall()
+        rows = conn.execute("""
+        SELECT id, date, student
+        FROM attendance
+        WHERE deleted_at IS NULL
+        """).fetchall()
 
     if not rows:
         await msg.answer("Нет записей")
@@ -236,9 +244,26 @@ async def send_admin(msg: Message):
 @dp.message(F.text == "🗑 Очистить рапортичку")
 async def clear(msg: Message):
     with db() as conn:
-        conn.execute("DELETE FROM attendance")
+        conn.execute(
+            "UPDATE attendance SET deleted_at=? WHERE deleted_at IS NULL",
+            (now(),)
+        )
         conn.commit()
-    await msg.answer("🗑 Рапортичка очищена")
+    await msg.answer("🗑 Рапортичка очищена (можно восстановить 30 дней)")
+
+# ================= ВОССТАНОВЛЕНИЕ =================
+@dp.message(F.text == "♻ Восстановить за месяц")
+async def restore(msg: Message):
+    limit_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    with db() as conn:
+        conn.execute("""
+        UPDATE attendance
+        SET deleted_at=NULL
+        WHERE deleted_at IS NOT NULL
+        AND deleted_at >= ?
+        """, (limit_date,))
+        conn.commit()
+    await msg.answer("♻ Данные восстановлены (если были удалены ≤ 30 дней назад)")
 
 # ================= ЗАПУСК =================
 async def main():
