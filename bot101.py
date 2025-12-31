@@ -2,23 +2,24 @@ import asyncio
 import sqlite3
 from datetime import datetime, timedelta
 
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
+from aiogram import Bot, Dispatcher
 from aiogram.types import (
+    Message, CallbackQuery,
     ReplyKeyboardMarkup, KeyboardButton,
     InlineKeyboardMarkup, InlineKeyboardButton,
     FSInputFile
 )
+from aiogram.filters import Command
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
-# ================== НАСТРОЙКИ ==================
+# ================= НАСТРОЙКИ =================
 BOT_TOKEN = "8397597216:AAFtzivDMoNxcRU06vp8wobfG6NU28BkIgs"
 ADMIN_USERNAME = "Glabak0200"  # без @
 
-DB_FILE = "attendance.db"
-EXCEL_FILE = "rapport_101tp.xlsx"
+DB_NAME = "attendance.db"
+EXCEL_NAME = "rapport.xlsx"
 
 STUDENTS = [
     "Бабук Владислав",
@@ -44,9 +45,9 @@ bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 ADMIN_CHAT_ID = None
 
-# ================== БАЗА ==================
+# ================= БАЗА =================
 def db():
-    return sqlite3.connect(DB_FILE)
+    return sqlite3.connect(DB_NAME)
 
 def init_db():
     with db() as con:
@@ -68,7 +69,7 @@ def today():
 def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# ================== EXCEL ==================
+# ================= EXCEL =================
 def export_excel():
     wb = Workbook()
     ws = wb.active
@@ -92,35 +93,35 @@ def export_excel():
     for col in ws.columns:
         ws.column_dimensions[col[0].column_letter].width = 30
 
-    wb.save(EXCEL_FILE)
+    wb.save(EXCEL_NAME)
 
-# ================== КЛАВИАТУРА ==================
+# ================= КЛАВИАТУРА =================
 def menu():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📋 Отметить отсутствующих")],
-            [KeyboardButton(text="✏ Редактировать рапортичку")],
-            [KeyboardButton(text="📤 Выгрузить рапортичку")],
-            [KeyboardButton(text="📨 Отправить админу")],
-            [KeyboardButton(text="🗑 Очистить рапортичку")],
-            [KeyboardButton(text="♻ Восстановить за месяц")]
+            [KeyboardButton(text="➕ Отметить")],
+            [KeyboardButton(text="✏ Редактировать")],
+            [KeyboardButton(text="📤 Выгрузить")],
+            [KeyboardButton(text="📨 Админу")],
+            [KeyboardButton(text="🗑 Очистить")],
+            [KeyboardButton(text="♻ Восстановить")]
         ],
         resize_keyboard=True
     )
 
-# ================== START ==================
+# ================= START =================
 @dp.message(Command("start"))
-async def start(msg: types.Message):
+async def start(msg: Message):
     global ADMIN_CHAT_ID
     if msg.from_user.username == ADMIN_USERNAME:
         ADMIN_CHAT_ID = msg.chat.id
-        await msg.answer("✅ Ты назначен администратором")
+        await msg.answer("✅ Ты администратор")
 
-    await msg.answer("📘 Рапортичка группы 101 тп", reply_markup=menu())
+    await msg.answer("📘 Рапортичка 101 тп", reply_markup=menu())
 
-# ================== ОТМЕТКА ==================
-@dp.message(lambda m: m.text == "📋 Отметить отсутствующих")
-async def mark(msg: types.Message):
+# ================= ОТМЕТКА =================
+@dp.message(lambda m: m.text == "➕ Отметить")
+async def choose_student(msg: Message):
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=s, callback_data=f"st|{s}")]
@@ -130,7 +131,7 @@ async def mark(msg: types.Message):
     await msg.answer(f"Дата: {today()}", reply_markup=kb)
 
 @dp.callback_query(lambda c: c.data.startswith("st|"))
-async def choose_reason(call: types.CallbackQuery):
+async def choose_reason(call: CallbackQuery):
     student = call.data.split("|", 1)[1]
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -141,7 +142,7 @@ async def choose_reason(call: types.CallbackQuery):
     await call.message.answer(student, reply_markup=kb)
 
 @dp.callback_query(lambda c: c.data.startswith("rs|"))
-async def save(call: types.CallbackQuery):
+async def save(call: CallbackQuery):
     _, student, reason = call.data.split("|", 2)
     with db() as con:
         con.execute("""
@@ -156,9 +157,9 @@ async def save(call: types.CallbackQuery):
         con.commit()
     await call.message.answer("✅ Записано")
 
-# ================== РЕДАКТИРОВАНИЕ ==================
-@dp.message(lambda m: m.text == "✏ Редактировать рапортичку")
-async def edit(msg: types.Message):
+# ================= РЕДАКТИРОВАНИЕ =================
+@dp.message(lambda m: m.text == "✏ Редактировать")
+async def edit(msg: Message):
     with db() as con:
         rows = con.execute("""
         SELECT id, date, student, reason
@@ -181,7 +182,7 @@ async def edit(msg: types.Message):
     await msg.answer("Выбери запись:", reply_markup=kb)
 
 @dp.callback_query(lambda c: c.data.startswith("ed|"))
-async def edit_reason(call: types.CallbackQuery):
+async def edit_reason(call: CallbackQuery):
     rec_id = call.data.split("|")[1]
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -194,7 +195,7 @@ async def edit_reason(call: types.CallbackQuery):
     await call.message.answer("Новая причина:", reply_markup=kb)
 
 @dp.callback_query(lambda c: c.data.startswith("upd|"))
-async def update(call: types.CallbackQuery):
+async def update(call: CallbackQuery):
     _, rec_id, reason = call.data.split("|", 2)
     with db() as con:
         con.execute(
@@ -204,52 +205,52 @@ async def update(call: types.CallbackQuery):
         con.commit()
     await call.message.answer("✏ Обновлено")
 
-# ================== ВЫГРУЗКА ==================
-@dp.message(lambda m: m.text == "📤 Выгрузить рапортичку")
-async def export(msg: types.Message):
+# ================= ВЫГРУЗКА =================
+@dp.message(lambda m: m.text == "📤 Выгрузить")
+async def export(msg: Message):
     export_excel()
-    await msg.answer_document(FSInputFile(EXCEL_FILE))
+    await msg.answer_document(FSInputFile(EXCEL_NAME))
 
-# ================== АДМИН ==================
-@dp.message(lambda m: m.text == "📨 Отправить админу")
-async def send_admin(msg: types.Message):
+# ================= АДМИН =================
+@dp.message(lambda m: m.text == "📨 Админу")
+async def send_admin(msg: Message):
     if not ADMIN_CHAT_ID:
-        await msg.answer("❌ Администратор не активен")
+        await msg.answer("Админ не активен")
         return
     export_excel()
     await bot.send_document(
         ADMIN_CHAT_ID,
-        FSInputFile(EXCEL_FILE),
-        caption="📨 Итоговая рапортичка"
+        FSInputFile(EXCEL_NAME),
+        caption="📊 Рапортичка"
     )
-    await msg.answer("✅ Отправлено админу")
+    await msg.answer("✅ Отправлено")
 
-# ================== ОЧИСТКА ==================
-@dp.message(lambda m: m.text == "🗑 Очистить рапортичку")
-async def clear(msg: types.Message):
+# ================= ОЧИСТКА =================
+@dp.message(lambda m: m.text == "🗑 Очистить")
+async def clear(msg: Message):
     with db() as con:
         con.execute(
             "UPDATE attendance SET deleted_at=? WHERE deleted_at IS NULL",
             (now(),)
         )
         con.commit()
-    await msg.answer("🗑 Очищено (можно восстановить 30 дней)")
+    await msg.answer("🗑 Очищено (восстановимо 30 дней)")
 
-# ================== ВОССТАНОВЛЕНИЕ ==================
-@dp.message(lambda m: m.text == "♻ Восстановить за месяц")
-async def restore(msg: types.Message):
+# ================= ВОССТАНОВЛЕНИЕ =================
+@dp.message(lambda m: m.text == "♻ Восстановить")
+async def restore(msg: Message):
     limit = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
     with db() as con:
         con.execute("""
         UPDATE attendance
-        SET deleted_at = NULL
+        SET deleted_at=NULL
         WHERE deleted_at IS NOT NULL
         AND deleted_at >= ?
         """, (limit,))
         con.commit()
-    await msg.answer("♻ Восстановление выполнено")
+    await msg.answer("♻ Восстановлено")
 
-# ================== ЗАПУСК ==================
+# ================= ЗАПУСК =================
 async def main():
     init_db()
     print("Бот запущен")
