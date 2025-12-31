@@ -15,19 +15,21 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-from time_service import get_current_date
-from report_logic import (
-    migrate,
-    soft_clear,
-    restore_last_30_days,
-    is_last_day_of_month
+# ===== ПОДКЛЮЧЕНИЕ МОДУЛЯ РЕДАКТИРОВАНИЯ =====
+from edit_attendance import (
+    edit_choose_date,
+    edit_choose_student,
+    edit_choose_action,
+    edit_choose_reason,
+    edit_set_reason,
+    edit_set_present
 )
 
 # ================== НАСТРОЙКИ ==================
 BOT_TOKEN = "8397597216:AAFtzivDMoNxcRU06vp8wobfG6NU28BkIgs"
 
-ADMIN_USERNAME = "Glabak0200"   # ← БЕЗ @
-ADMIN_CHAT_ID = None               # заполняется автоматически
+ADMIN_USERNAME = "Glabak0200"  # БЕЗ @
+ADMIN_CHAT_ID = None
 
 DB_FILE = "attendance.db"
 EXCEL_FILE = "rapport_101tp.xlsx"
@@ -55,7 +57,7 @@ REASONS = [
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
-# ================== БАЗА ДАННЫХ ==================
+# ================== БАЗА ==================
 def db():
     return sqlite3.connect(DB_FILE)
 
@@ -89,11 +91,14 @@ def init_db():
                 "INSERT OR IGNORE INTO students (full_name) VALUES (?)",
                 (s,)
             )
-
         conn.commit()
 
+# ================== ДАТА ==================
+def current_date():
+    return datetime.now().strftime("%Y-%m-%d")
+
 # ================== EXCEL ==================
-def update_excel_file():
+def update_excel():
     wb = Workbook()
     ws = wb.active
     ws.title = "Рапортичка"
@@ -101,9 +106,9 @@ def update_excel_file():
     headers = ["Дата", "ФИО", "Статус", "Причина", "Кто отметил"]
     ws.append(headers)
 
-    for col in range(1, 6):
-        ws.cell(row=1, column=col).font = Font(bold=True)
-        ws.cell(row=1, column=col).alignment = Alignment(horizontal="center")
+    for i in range(1, 6):
+        ws.cell(row=1, column=i).font = Font(bold=True)
+        ws.cell(row=1, column=i).alignment = Alignment(horizontal="center")
 
     with db() as conn:
         c = conn.cursor()
@@ -123,11 +128,10 @@ def update_excel_file():
                 c.execute("""
                 SELECT status, reason, author
                 FROM attendance
-                WHERE date=? AND student_id=?
-                AND deleted_at IS NULL
+                WHERE date=? AND student_id=? AND deleted_at IS NULL
                 """, (d, sid))
-
                 row = c.fetchone()
+
                 if row:
                     status, reason, author = row
                 else:
@@ -136,7 +140,7 @@ def update_excel_file():
                 ws.append([d, name, status, reason, author])
 
     for col in ws.columns:
-        ws.column_dimensions[col[0].column_letter].width = 30
+        ws.column_dimensions[col[0].column_letter].width = 28
 
     table = Table(displayName="Attendance", ref=f"A1:E{ws.max_row}")
     table.tableStyleInfo = TableStyleInfo(
@@ -147,170 +151,138 @@ def update_excel_file():
 
     wb.save(EXCEL_FILE)
 
-# ================== КЛАВИАТУРЫ ==================
+# ================== КЛАВИАТУРА ==================
 def main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📋 Отметить отсутствующих")],
+            [KeyboardButton(text="✏ Редактировать рапортичку")],
             [KeyboardButton(text="📤 Выгрузить рапортичку")],
             [KeyboardButton(text="📨 Отправить рапортичку админу")],
-            [KeyboardButton(text="♻ Восстановить за месяц")],
-            [KeyboardButton(text="🗑 Очистить рапортичку")]
         ],
         resize_keyboard=True
     )
 
-# ================== ХЕНДЛЕРЫ ==================
+# ================== START ==================
 @dp.message(Command("start"))
 async def start(msg: Message):
     global ADMIN_CHAT_ID
 
     if msg.from_user.username == ADMIN_USERNAME:
         ADMIN_CHAT_ID = msg.chat.id
-        await msg.answer("✅ Ты назначен получателем итоговой рапортички")
+        await msg.answer("✅ Ты назначен администратором")
 
     await msg.answer(
         "📘 Рапортичка группы 101 тп",
         reply_markup=main_menu()
     )
 
-# -------- ОТМЕТКА --------
+# ================== ОТМЕТКА ==================
 @dp.message(F.text == "📋 Отметить отсутствующих")
-async def mark_menu(msg: Message):
+async def mark(msg: Message):
     kb = []
     with db() as conn:
         c = conn.cursor()
         c.execute("SELECT id, full_name FROM students")
         for sid, name in c.fetchall():
-            kb.append([
-                InlineKeyboardButton(
-                    text=name,
-                    callback_data=f"student_{sid}"
-                )
-            ])
+            kb.append([InlineKeyboardButton(
+                text=name,
+                callback_data=f"student_{sid}"
+            )])
 
     await msg.answer(
-        f"📅 Дата: {get_current_date()}",
+        f"📅 Дата: {current_date()}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
 
 @dp.callback_query(F.data.startswith("student_"))
 async def choose_reason(call: CallbackQuery):
     sid = call.data.split("_")[1]
-    kb = [
-        [InlineKeyboardButton(
-            text=r,
-            callback_data=f"reason_{sid}_{r}"
-        )] for r in REASONS
-    ]
+    kb = [[InlineKeyboardButton(
+        text=r,
+        callback_data=f"reason_{sid}_{r}"
+    )] for r in REASONS]
+
     await call.message.answer(
-        "Укажи причину отсутствия:",
+        "Причина отсутствия:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
     )
 
 @dp.callback_query(F.data.startswith("reason_"))
-async def save_attendance(call: CallbackQuery):
+async def save(call: CallbackQuery):
     _, sid, reason = call.data.split("_", 2)
 
     with db() as conn:
         conn.execute("""
-        INSERT INTO attendance
-        (date, student_id, status, reason, author)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO attendance (date, student_id, status, reason, author)
+        VALUES (?, ?, 'отсутствовал', ?, ?)
         """, (
-            get_current_date(),
+            current_date(),
             sid,
-            "отсутствовал",
             reason,
             call.from_user.username or call.from_user.full_name
         ))
         conn.commit()
 
-    update_excel_file()
+    update_excel()
     await call.message.answer("✅ Отмечено")
 
-# -------- ВЫГРУЗКА --------
+# ================== РЕДАКТИРОВАНИЕ ==================
+@dp.message(F.text == "✏ Редактировать рапортичку")
+async def edit(msg: Message):
+    await edit_choose_date(msg)
+
+@dp.callback_query(F.data.startswith("edit_date_"))
+async def cb_edit_date(call: CallbackQuery):
+    await edit_choose_student(call)
+
+@dp.callback_query(F.data.startswith("edit_student_"))
+async def cb_edit_student(call: CallbackQuery):
+    await edit_choose_action(call)
+
+@dp.callback_query(F.data.startswith("edit_reason_") and not F.data.startswith("edit_reason_set"))
+async def cb_edit_reason(call: CallbackQuery):
+    await edit_choose_reason(call)
+
+@dp.callback_query(F.data.startswith("edit_reason_set_"))
+async def cb_edit_reason_set(call: CallbackQuery):
+    await edit_set_reason(call)
+    update_excel()
+
+@dp.callback_query(F.data.startswith("edit_present_"))
+async def cb_edit_present(call: CallbackQuery):
+    await edit_set_present(call)
+    update_excel()
+
+# ================== ВЫГРУЗКА ==================
 @dp.message(F.text == "📤 Выгрузить рапортичку")
 async def export(msg: Message):
-    update_excel_file()
+    update_excel()
     await msg.answer_document(
         FSInputFile(EXCEL_FILE),
-        caption="📤 Общая рапортичка группы 101 тп"
+        caption="📤 Общая рапортичка"
     )
 
-# -------- ОТПРАВКА АДМИНУ --------
+# ================== АДМИН ==================
 @dp.message(F.text == "📨 Отправить рапортичку админу")
-async def send_to_admin(msg: Message):
+async def send_admin(msg: Message):
     if not ADMIN_CHAT_ID:
-        await msg.answer(
-            "❌ Администратор ещё не написал /start боту.\n"
-            "Отправка невозможна."
-        )
+        await msg.answer("❌ Администратор не авторизовался (/start)")
         return
 
-    update_excel_file()
-
+    update_excel()
     await bot.send_document(
         ADMIN_CHAT_ID,
         FSInputFile(EXCEL_FILE),
-        caption="📨 Рапортичка отправлена вручную"
+        caption="📨 Рапортичка"
     )
-
-    await msg.answer("✅ Рапортичка отправлена админу")
-
-# -------- ВОССТАНОВЛЕНИЕ --------
-@dp.message(F.text == "♻ Восстановить за месяц")
-async def restore(msg: Message):
-    restore_last_30_days()
-    update_excel_file()
-    await msg.answer("♻ Данные восстановлены")
-
-# -------- ОЧИСТКА --------
-@dp.message(F.text == "🗑 Очистить рапортичку")
-async def clear_confirm(msg: Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Нет", callback_data="clear_no")],
-        [InlineKeyboardButton(text="✅ Да", callback_data="clear_yes")]
-    ])
-    await msg.answer("⚠ Очистить ВСЮ рапортичку?", reply_markup=kb)
-
-@dp.callback_query(F.data == "clear_yes")
-async def clear_yes(call: CallbackQuery):
-    soft_clear()
-    update_excel_file()
-    await call.message.answer(
-        "🗑 Очищено (можно восстановить в течение 30 дней)"
-    )
-
-@dp.callback_query(F.data == "clear_no")
-async def clear_no(call: CallbackQuery):
-    await call.message.answer("Отмена")
+    await msg.answer("✅ Отправлено")
 
 # ================== ЗАПУСК ==================
 async def main():
     init_db()
-    migrate()
-
-    last_sent_month = None
-
-    while True:
-        try:
-            if is_last_day_of_month() and ADMIN_CHAT_ID:
-                month = datetime.now().month
-                if month != last_sent_month:
-                    update_excel_file()
-                    await bot.send_document(
-                        ADMIN_CHAT_ID,
-                        FSInputFile(EXCEL_FILE),
-                        caption="📊 Итоговая рапортичка за месяц"
-                    )
-                    last_sent_month = month
-
-            await dp.start_polling(bot)
-
-        except Exception as e:
-            print("Ошибка:", e)
-            await asyncio.sleep(5)
+    print("Бот запущен")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
