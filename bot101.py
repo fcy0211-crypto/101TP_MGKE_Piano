@@ -16,7 +16,7 @@ from openpyxl.styles import Font, PatternFill
 
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = "8397597216:AAFtzivDMoNxcRU06vp8wobfG6NU28BkIgs"
-ADMIN_USERNAME = "Glabak0200"  # без @
+ADMIN_USERNAME = "Glabak0200"
 
 DB_NAME = "attendance.db"
 EXCEL_NAME = "rapport.xlsx"
@@ -41,6 +41,8 @@ REASONS = [
     "по неуважительной причине"
 ]
 
+HOURS = [1, 2, 3, 4, 5, 6]
+
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 ADMIN_CHAT_ID = None
@@ -57,6 +59,7 @@ def init_db():
             date TEXT,
             student TEXT,
             reason TEXT,
+            hours INTEGER,
             author TEXT,
             deleted_at TEXT
         )
@@ -69,17 +72,17 @@ def today():
 def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# ================= EXCEL (РАСКРАШЕННЫЙ) =================
+# ================= EXCEL =================
 def export_excel():
     wb = Workbook()
     ws = wb.active
     ws.title = "Рапортичка"
 
     header_fill = PatternFill("solid", fgColor="DDDDDD")
-    green_fill = PatternFill("solid", fgColor="C6EFCE")  # присутствовал
-    red_fill = PatternFill("solid", fgColor="FFC7CE")    # отсутствовал
+    green_fill = PatternFill("solid", fgColor="C6EFCE")
+    red_fill = PatternFill("solid", fgColor="FFC7CE")
 
-    headers = ["Дата", "ФИО", "Статус", "Причина", "Кто отметил"]
+    headers = ["Дата", "ФИО", "Статус", "Причина", "Часы", "Кто отметил"]
     ws.append(headers)
 
     for c in ws[1]:
@@ -96,28 +99,28 @@ def export_excel():
     for (date,) in dates:
         with db() as con:
             rows = con.execute("""
-            SELECT student, reason, author
+            SELECT student, reason, hours, author
             FROM attendance
             WHERE date = ? AND deleted_at IS NULL
             """, (date,)).fetchall()
 
-        absent = {r[0]: (r[1], r[2]) for r in rows}
+        absent = {r[0]: (r[1], r[2], r[3]) for r in rows}
 
         for student in sorted(STUDENTS):
             if student in absent:
-                reason, author = absent[student]
-                ws.append([date, student, "отсутствовал", reason, author])
+                reason, hours, author = absent[student]
+                ws.append([date, student, "отсутствовал", reason, hours, author])
                 for cell in ws[ws.max_row]:
                     cell.fill = red_fill
             else:
-                ws.append([date, student, "присутствовал", "", ""])
+                ws.append([date, student, "присутствовал", "", "", ""])
                 for cell in ws[ws.max_row]:
                     cell.fill = green_fill
 
     for col in ws.columns:
-        ws.column_dimensions[col[0].column_letter].width = 30
+        ws.column_dimensions[col[0].column_letter].width = 28
 
-    ws.auto_filter.ref = f"A1:E{ws.max_row}"
+    ws.auto_filter.ref = f"A1:F{ws.max_row}"
     wb.save(EXCEL_NAME)
 
 # ================= КЛАВИАТУРА =================
@@ -158,30 +161,38 @@ async def choose_student(msg: Message):
 @dp.callback_query(lambda c: c.data.startswith("s"))
 async def choose_reason(call: CallbackQuery):
     idx = int(call.data[1:])
-    student = STUDENTS[idx]
-
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=r, callback_data=f"r{idx}|{i}")]
             for i, r in enumerate(REASONS)
         ]
     )
-    await call.message.answer(student, reply_markup=kb)
+    await call.message.answer(STUDENTS[idx], reply_markup=kb)
 
 @dp.callback_query(lambda c: c.data.startswith("r"))
-async def save(call: CallbackQuery):
+async def choose_hours(call: CallbackQuery):
     left, reason_idx = call.data[1:].split("|")
-    student = STUDENTS[int(left)]
-    reason = REASONS[int(reason_idx)]
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=str(h), callback_data=f"h{left}|{reason_idx}|{h}")]
+            for h in HOURS
+        ]
+    )
+    await call.message.answer("Сколько часов отсутствовал?", reply_markup=kb)
+
+@dp.callback_query(lambda c: c.data.startswith("h"))
+async def save(call: CallbackQuery):
+    s_idx, r_idx, hours = call.data[1:].split("|")
 
     with db() as con:
         con.execute("""
-        INSERT INTO attendance (date, student, reason, author, deleted_at)
-        VALUES (?, ?, ?, ?, NULL)
+        INSERT INTO attendance (date, student, reason, hours, author, deleted_at)
+        VALUES (?, ?, ?, ?, ?, NULL)
         """, (
             today(),
-            student,
-            reason,
+            STUDENTS[int(s_idx)],
+            REASONS[int(r_idx)],
+            int(hours),
             call.from_user.username or call.from_user.full_name
         ))
         con.commit()
@@ -193,7 +204,7 @@ async def save(call: CallbackQuery):
 async def edit(msg: Message):
     with db() as con:
         rows = con.execute("""
-        SELECT id, date, student, reason
+        SELECT id, date, student, reason, hours
         FROM attendance
         WHERE deleted_at IS NULL
         """).fetchall()
@@ -205,7 +216,7 @@ async def edit(msg: Message):
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(
-                text=f"{r[1]} | {r[2]}",
+                text=f"{r[1]} | {r[2]} | {r[4]}ч",
                 callback_data=f"e{r[0]}"
             )] for r in rows
         ]
@@ -224,15 +235,24 @@ async def edit_reason(call: CallbackQuery):
     await call.message.answer("Новая причина:", reply_markup=kb)
 
 @dp.callback_query(lambda c: c.data.startswith("u"))
-async def update(call: CallbackQuery):
+async def edit_hours(call: CallbackQuery):
     rec_id, reason_idx = call.data[1:].split("|")
-    reason = REASONS[int(reason_idx)]
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=str(h), callback_data=f"x{rec_id}|{reason_idx}|{h}")]
+            for h in HOURS
+        ]
+    )
+    await call.message.answer("Новые часы:", reply_markup=kb)
+
+@dp.callback_query(lambda c: c.data.startswith("x"))
+async def update(call: CallbackQuery):
+    rec_id, reason_idx, hours = call.data[1:].split("|")
 
     with db() as con:
-        con.execute(
-            "UPDATE attendance SET reason=? WHERE id=?",
-            (reason, int(rec_id))
-        )
+        con.execute("""
+        UPDATE attendance SET reason=?, hours=? WHERE id=?
+        """, (REASONS[int(reason_idx)], int(hours), int(rec_id)))
         con.commit()
 
     await call.message.answer("✏ Обновлено")
