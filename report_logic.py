@@ -2,7 +2,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from time_service import get_current_date
 
-DB_FILE = "attendance.db"
+DB_FILE = ""
 
 
 def db():
