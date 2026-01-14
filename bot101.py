@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 from datetime import datetime, timedelta
+import os
 
 from aiogram import Bot, Dispatcher
 from aiogram.types import (
@@ -64,6 +65,16 @@ def today():
 
 def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+# ================= ПОЛНАЯ ОЧИСТКА =================
+def full_reset():
+    if os.path.exists(DB_NAME):
+        os.remove(DB_NAME)
+        print("База данных удалена")
+
+    if os.path.exists(EXCEL_NAME):
+        os.remove(EXCEL_NAME)
+        print("Excel файл удалён")
 
 # ================= EXCEL =================
 def export_excel():
@@ -191,6 +202,10 @@ async def edit(msg: Message):
         WHERE deleted_at IS NULL
         """).fetchall()
 
+    if not rows:
+        await msg.answer("Нет записей для редактирования")
+        return
+
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(
@@ -271,8 +286,9 @@ async def restore(msg: Message):
 
 # ================= ЗАПУСК =================
 async def main():
-    init_db()
-    print("Бот запущен")
+    full_reset()  # очистка базы и Excel
+    init_db()     # создание чистой базы
+    print("Бот запущен с чистого листа")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
