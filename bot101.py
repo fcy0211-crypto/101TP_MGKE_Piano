@@ -160,6 +160,8 @@ async def choose_student(msg: Message):
 
 @dp.callback_query(lambda c: c.data.startswith("s"))
 async def choose_reason(call: CallbackQuery):
+    await call.answer()
+
     idx = int(call.data[1:])
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -171,6 +173,8 @@ async def choose_reason(call: CallbackQuery):
 
 @dp.callback_query(lambda c: c.data.startswith("r"))
 async def choose_hours(call: CallbackQuery):
+    await call.answer()
+
     left, reason_idx = call.data[1:].split("|")
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -182,6 +186,8 @@ async def choose_hours(call: CallbackQuery):
 
 @dp.callback_query(lambda c: c.data.startswith("h"))
 async def save(call: CallbackQuery):
+    await call.answer()
+
     s_idx, r_idx, hours = call.data[1:].split("|")
 
     with db() as con:
@@ -225,6 +231,8 @@ async def edit(msg: Message):
 
 @dp.callback_query(lambda c: c.data.startswith("e"))
 async def edit_reason(call: CallbackQuery):
+    await call.answer()
+
     rec_id = int(call.data[1:])
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -236,6 +244,8 @@ async def edit_reason(call: CallbackQuery):
 
 @dp.callback_query(lambda c: c.data.startswith("u"))
 async def edit_hours(call: CallbackQuery):
+    await call.answer()
+
     rec_id, reason_idx = call.data[1:].split("|")
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -247,12 +257,20 @@ async def edit_hours(call: CallbackQuery):
 
 @dp.callback_query(lambda c: c.data.startswith("x"))
 async def update(call: CallbackQuery):
+    await call.answer()
+
     rec_id, reason_idx, hours = call.data[1:].split("|")
 
     with db() as con:
         con.execute("""
-        UPDATE attendance SET reason=?, hours=? WHERE id=?
-        """, (REASONS[int(reason_idx)], int(hours), int(rec_id)))
+        UPDATE attendance
+        SET reason=?, hours=?
+        WHERE id=?
+        """, (
+            REASONS[int(reason_idx)],
+            int(hours),
+            int(rec_id)
+        ))
         con.commit()
 
     await call.message.answer("✏ Обновлено")
