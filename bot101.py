@@ -22,17 +22,10 @@ DB_NAME = "attendance.db"
 EXCEL_NAME = "rapport.xlsx"
 
 STUDENTS = [
-    "Бабук Владислав",
-    "Гарцуев Ростислав",
-    "Глинская Милена",
-    "Демьянко Надежда",
-    "Касьянюк Глеб",
-    "Мигутский Тимур",
-    "Михальчик Илья",
-    "Полторако Артём",
-    "Русецкая Кристина",
-    "Серяков Игорь",
-    "Шаболтас Матвей"
+    "Бабук Владислав", "Гарцуев Ростислав", "Глинская Милена",
+    "Демьянко Надежда", "Касьянюк Глеб", "Мигутский Тимур",
+    "Михальчик Илья", "Полторако Артём", "Русецкая Кристина",
+    "Серяков Игорь", "Шаболтас Матвей"
 ]
 
 REASONS = [
@@ -85,15 +78,31 @@ def export_excel():
         c.font = Font(bold=True)
 
     with db() as con:
-        rows = con.execute("""
-        SELECT date, student, reason, hours, author
-        FROM attendance
+        dates = con.execute("""
+        SELECT DISTINCT date FROM attendance
         WHERE deleted_at IS NULL
         ORDER BY date
         """).fetchall()
 
-    for r in rows:
-        ws.append([r[0], r[1], "отсутствовал", r[2], r[3], r[4]])
+    for (date,) in dates:
+        with db() as con:
+            rows = con.execute("""
+            SELECT student, reason, hours, author
+            FROM attendance
+            WHERE date = ? AND deleted_at IS NULL
+            """, (date,)).fetchall()
+
+        absent = {r[0]: (r[1], r[2], r[3]) for r in rows}
+
+        for student in sorted(STUDENTS):
+            if student in absent:
+                reason, hours, author = absent[student]
+                ws.append([date, student, "отсутствовал", reason, hours, author])
+            else:
+                ws.append([date, student, "присутствовал", "", "", ""])
+
+    for col in ws.columns:
+        ws.column_dimensions[col[0].column_letter].width = 28
 
     wb.save(EXCEL_NAME)
 
@@ -103,7 +112,10 @@ def menu():
         keyboard=[
             [KeyboardButton(text="➕ Отметить")],
             [KeyboardButton(text="✏ Редактировать")],
-            [KeyboardButton(text="📤 Выгрузить")]
+            [KeyboardButton(text="📤 Выгрузить")],
+            [KeyboardButton(text="📨 Админу")],
+            [KeyboardButton(text="🗑 Очистить")],
+            [KeyboardButton(text="♻ Восстановить")]
         ],
         resize_keyboard=True
     )
@@ -111,7 +123,12 @@ def menu():
 # ================= START =================
 @dp.message(Command("start"))
 async def start(msg: Message):
-    await msg.answer("📘 Рапортичка", reply_markup=menu())
+    global ADMIN_CHAT_ID
+    if msg.from_user.username == ADMIN_USERNAME:
+        ADMIN_CHAT_ID = msg.chat.id
+        await msg.answer("✅ Ты администратор")
+
+    await msg.answer("📘 Рапортичка 101 тп", reply_markup=menu())
 
 # ================= ОТМЕТКА =================
 @dp.message(lambda m: m.text == "➕ Отметить")
@@ -122,12 +139,10 @@ async def choose_student(msg: Message):
             for i, s in enumerate(STUDENTS)
         ]
     )
-    await msg.answer("Выбери студента:", reply_markup=kb)
+    await msg.answer(f"Дата: {today()}", reply_markup=kb)
 
 @dp.callback_query(lambda c: c.data.startswith("s"))
 async def choose_reason(call: CallbackQuery):
-    await call.answer()
-
     idx = int(call.data[1:])
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -139,12 +154,10 @@ async def choose_reason(call: CallbackQuery):
 
 @dp.callback_query(lambda c: c.data.startswith("r"))
 async def choose_hours(call: CallbackQuery):
-    await call.answer()
-
-    s_idx, r_idx = call.data[1:].split("|")
+    left, reason_idx = call.data[1:].split("|")
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=str(h), callback_data=f"h{s_idx}|{r_idx}|{h}")]
+            [InlineKeyboardButton(text=f"{h} ч", callback_data=f"h{left}|{reason_idx}|{h}")]
             for h in HOURS
         ]
     )
@@ -152,24 +165,64 @@ async def choose_hours(call: CallbackQuery):
 
 @dp.callback_query(lambda c: c.data.startswith("h"))
 async def save(call: CallbackQuery):
-    await call.answer()
-
-    s_idx, r_idx, hours = call.data[1:].split("|")
-
+    student_idx, reason_idx, hours = call.data[1:].split("|")
     with db() as con:
         con.execute("""
         INSERT INTO attendance (date, student, reason, hours, author, deleted_at)
         VALUES (?, ?, ?, ?, ?, NULL)
         """, (
             today(),
-            STUDENTS[int(s_idx)],
-            REASONS[int(r_idx)],
+            STUDENTS[int(student_idx)],
+            REASONS[int(reason_idx)],
             int(hours),
-            call.from_user.username
+            call.from_user.username or call.from_user.full_name
         ))
         con.commit()
 
     await call.message.answer("✅ Отмечено")
+
+# ================= РЕДАКТИРОВАНИЕ =================
+@dp.message(lambda m: m.text == "✏ Редактировать")
+async def edit(msg: Message):
+    with db() as con:
+        rows = con.execute("""
+        SELECT id, date, student, reason, hours
+        FROM attendance
+        WHERE deleted_at IS NULL
+        """).fetchall()
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"{r[1]} | {r[2]} ({r[4]} ч)",
+                callback_data=f"e{r[0]}"
+            )] for r in rows
+        ]
+    )
+    await msg.answer("Выбери запись:", reply_markup=kb)
+
+@dp.callback_query(lambda c: c.data.startswith("e"))
+async def edit_hours(call: CallbackQuery):
+    rec_id = int(call.data[1:])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"{h} ч", callback_data=f"u{rec_id}|{h}")]
+            for h in HOURS
+        ]
+    )
+    await call.message.answer("Новое количество часов:", reply_markup=kb)
+
+@dp.callback_query(lambda c: c.data.startswith("u"))
+async def update(call: CallbackQuery):
+    rec_id, hours = call.data[1:].split("|")
+    with db() as con:
+        con.execute(
+            "UPDATE attendance SET hours=? WHERE id=?",
+            (int(hours), int(rec_id))
+        )
+        con.commit()
+
+    await call.message.answer("✏ Обновлено")
 
 # ================= ВЫГРУЗКА =================
 @dp.message(lambda m: m.text == "📤 Выгрузить")
@@ -177,9 +230,49 @@ async def export(msg: Message):
     export_excel()
     await msg.answer_document(FSInputFile(EXCEL_NAME))
 
+# ================= АДМИН =================
+@dp.message(lambda m: m.text == "📨 Админу")
+async def send_admin(msg: Message):
+    if not ADMIN_CHAT_ID:
+        await msg.answer("Админ не активен")
+        return
+
+    export_excel()
+    await bot.send_document(
+        ADMIN_CHAT_ID,
+        FSInputFile(EXCEL_NAME),
+        caption="📊 Рапортичка"
+    )
+    await msg.answer("✅ Отправлено")
+
+# ================= ОЧИСТКА =================
+@dp.message(lambda m: m.text == "🗑 Очистить")
+async def clear(msg: Message):
+    with db() as con:
+        con.execute(
+            "UPDATE attendance SET deleted_at=? WHERE deleted_at IS NULL",
+            (now(),)
+        )
+        con.commit()
+    await msg.answer("🗑 Очищено")
+
+# ================= ВОССТАНОВЛЕНИЕ =================
+@dp.message(lambda m: m.text == "♻ Восстановить")
+async def restore(msg: Message):
+    limit = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    with db() as con:
+        con.execute("""
+        UPDATE attendance
+        SET deleted_at=NULL
+        WHERE deleted_at >= ?
+        """, (limit,))
+        con.commit()
+    await msg.answer("♻ Восстановлено")
+
 # ================= ЗАПУСК =================
 async def main():
     init_db()
+    print("Бот запущен")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
